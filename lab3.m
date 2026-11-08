@@ -10,9 +10,8 @@ all_sc = -Nfft/2 : Nfft/2 - 1;
 all_sc_shifted = all_sc+Nfft/2+1;
 zero_sc = Nfft/2+1;
 
-% ИСПРАВЛЕНО: приведение к int32 убирает Warning об операторе двоеточия
-Gi_left = 1:int32(Nfft*Gi/2+1);
-Gi_right = int32(Nfft-Nfft*Gi/2+1):Nfft;
+Gi_left = 1:(Nfft*Gi/2+1);
+Gi_right = (Nfft-Nfft*Gi/2+1):Nfft;
 
 pilot_sc = max(Gi_left):16:min(Gi_right)-1;
 
@@ -36,6 +35,7 @@ N_symbs = 5;
 time_shift = 600;
 t_delay = zeros(time_shift,1);
 
+alg = 1; %1 - мин 2 - ЦП
 punkt = 0; % выбор пункта лабы
 delta = 20;
 
@@ -71,15 +71,24 @@ for idx_ber = 1:length(SNR_vector)
         OFDM_symb = ifft(ifftshift(tx_fd_sig,2),[],2);
 
         % добавление ЦП
-        OFDM_symb_cp = [OFDM_symb(:,end-CP_len+1:end),OFDM_symb];
+        if alg == 1
+            A = OFDM_symb(1,10:9+Nfft/4);
+            sync_meen = [A,A,-A,-A];
+            OFDM_symb_cp = OFDM_symb;
+        else
+            OFDM_symb_cp = [OFDM_symb(:,end-CP_len+1:end),OFDM_symb];
+        end
 
         %преобразование в один сигнал для передачи
         OFDM_vector = OFDM_symb_cp.';
         OFDM_vector = OFDM_vector(:);
 
         % Добавляем временной сдвиг
-        OFDM_vector_shift = [t_delay; OFDM_vector];
-
+        if alg == 1
+            OFDM_vector_shift = [t_delay;sync_meen(:); OFDM_vector];
+        else
+            OFDM_vector_shift = [t_delay;OFDM_vector];
+        end
         % АБГШ       
         Eb =  mean(abs(qammod(0:M_inf-1, M_inf)).^2) / log2(M_inf) / Nfft;
         N0 = Eb / 10^(SNR/10);
@@ -87,42 +96,82 @@ for idx_ber = 1:length(SNR_vector)
         noise = sigma*randn(size(OFDM_vector_shift)) + 1j*sigma*randn(size(OFDM_vector_shift));
 
         OFDM_noise = OFDM_vector_shift+noise;
-        if punkt == 1
-            true_delay = time_shift+1+delta;
-        else
-            T_frame = Nfft + CP_len;
-            N_avg = N_symbs - 1;
-            N_search = Nfft - 1;
+
+        if alg == 1
 
             x = OFDM_noise;
+            L = Nfft/4;
 
-            shifts = (0:N_avg-1)' * T_frame + (1:N_search);
+            N_search = length(x) - Nfft + 1;
+            shifts = 1:N_search;
 
-            z = x(1:end-Nfft) .* conj(x(Nfft+1:end));
+            z = x(1:end-L) .* conj(x(L+1:end));
 
             Sz = [0; cumsum(z)];
 
-            R = Sz(shifts + CP_len) - Sz(shifts);
+            P1 = Sz(shifts+L) - Sz(shifts);
 
-            % Когерентное накопление
-            if N_symbs == 2
-                ACF = abs(R);
+            P2 = Sz(shifts+3*L) - Sz(shifts+2*L);
+
+            P = P1 + P2;
+
+            E = [0; cumsum(abs(x).^2)];
+
+            E1 = E(shifts+L)   - E(shifts);
+            E2 = E(shifts+2*L) - E(shifts+L);
+            E3 = E(shifts+3*L) - E(shifts+2*L);
+            E4 = E(shifts+4*L) - E(shifts+3*L);
+
+            M = abs(P).^2 ./ ((E1+E3).*(E2+E4) + eps);
+
+            [~, sync_position] = max(M);
+
+        else
+            if punkt == 1
+                true_delay = time_shift+1+delta;
             else
-                ACF = abs(sum(R, 1));
-            end
-            % Приведение к строке
-            ACF = reshape(ACF, 1, []);
+                T_frame = Nfft + CP_len;
+                N_avg = N_symbs - 1;
+                N_search = Nfft - 1;
 
-            [~, true_delay] = max(ACF);
-        end
-                
+                x = OFDM_noise;
+
+                shifts = (0:N_avg-1)' * T_frame + (1:N_search);
+
+                z = x(1:end-Nfft) .* conj(x(Nfft+1:end));
+
+                Sz = [0; cumsum(z)];
+
+                R = Sz(shifts + CP_len) - Sz(shifts);
+
+                % Когерентное накопление
+                if N_symbs == 2
+                    ACF = abs(R);
+                else
+                    ACF = abs(sum(R, 1));
+                end
+                % Приведение к строке
+                ACF = reshape(ACF, 1, []);
+
+                [~, true_delay] = max(ACF);
+            end
+        end       
         % компенсация задержки
-        OFDM_compens = OFDM_noise(true_delay:(true_delay+(Nfft+CP_len)*(N_symbs-1)-1));
+        if alg == 2
+            OFDM_compens = OFDM_noise(true_delay:(true_delay+(Nfft+CP_len)*(N_symbs-1)-1));
+        else
+            OFDM_compens = OFDM_noise(sync_position+Nfft:(sync_position+Nfft+(Nfft)*(N_symbs-1)-1));
+        end
         % приемник
         OFDM_clean = reshape(OFDM_compens,size(OFDM_symb_cp,2),size(OFDM_symb_cp,1)-1).';
 
         % удаление цп
-        OFDM_rx = OFDM_clean(:,CP_len+1:end);
+        if alg == 1
+            OFDM_rx = OFDM_clean;
+        else
+            OFDM_rx = OFDM_clean(:,CP_len+1:end);
+        end
+        
 
         % переход в частоты
         OFDM_rx_fd = fftshift(fft(OFDM_rx,[],2),2);
@@ -138,7 +187,7 @@ for idx_ber = 1:length(SNR_vector)
         end
         rx_data_equalized = OFDM_rx_fd./H_all;
         rx_data_equalized = rx_data_equalized(:,Y_inf);
-        rx_data_demap = qamdemod(rx_data_equalized, 16,'OutputType', 'bit','UnitAveragePower', true);
+        rx_data_demap = qamdemod(rx_symbs, 16,'OutputType', 'bit','UnitAveragePower', true);% если без экв то = rx_symbs, с экв rx_data_equalized
         
         % Считаем ошибки текущего фрейма
         [numErrors, ~] = biterr(bits_dem_cut(:), rx_data_demap(:));
@@ -149,11 +198,18 @@ for idx_ber = 1:length(SNR_vector)
     BER_vector(idx_ber) = total_errors / total_bits;
 end
 
-%% АКФ при фикс снр
-figure;
-plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
-xlabel("time_shift");
-ylabel("ACF");
+%% АКФ 
+if alg == 2
+    figure;
+    plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
+    xlabel("time_shift");
+    ylabel("ACF");
+else
+    figure;
+    plot(linspace(1,length(M),length(M)),abs(M));
+    xlabel("time_shift");
+    ylabel("Metric_meen");
+end
 %% Теоретическая кривая
 P_const = mean(abs(qammod(0:M_inf-1, M_inf)).^2);   
 EbN0_vector = SNR_vector - 10*log10(P_const);
