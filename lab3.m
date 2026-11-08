@@ -27,17 +27,17 @@ n_pilot_bits = length(pilot_sc);
 
 
 %% Константы кадра
-CP_len = Nfft/4;
+CP_len = Nfft/128;
 T_symb = 100e-6;
 Fs = Nfft/T_symb;
-N_symbs = 5;
+N_symbs = 2;
 
 time_shift = 600;
 t_delay = zeros(time_shift,1);
 
 alg = 1; %1 - мин 2 - ЦП
 punkt = 0; % выбор пункта лабы
-delta = 20;
+delta = 0;
 
 %% канал 
 SNR_vector = 1:20; 
@@ -89,6 +89,13 @@ for idx_ber = 1:length(SNR_vector)
         else
             OFDM_vector_shift = [t_delay;OFDM_vector];
         end
+
+        % частотная расстройка
+        f_n = 2;
+        delta_f = f_n * (Fs / Nfft);
+        t = (0 : length(OFDM_vector_shift) - 1).' / Fs;
+        OFDM_vector_shift = OFDM_vector_shift .* exp(1j * 2 * pi * delta_f * t);
+
         % АБГШ       
         Eb =  mean(abs(qammod(0:M_inf-1, M_inf)).^2) / log2(M_inf) / Nfft;
         N0 = Eb / 10^(SNR/10);
@@ -125,6 +132,22 @@ for idx_ber = 1:length(SNR_vector)
             M = abs(P).^2 ./ ((E1+E3).*(E2+E4) + eps);
 
             [~, sync_position] = max(M);
+            % --- БЛОК ЧАСТОТНОЙ СИНХРОНИЗАЦИИ ---
+            % Извлекаем комплексное значение пика
+            CF_max = P(sync_position);
+            
+            % Находим фазу пика (угол поворота)
+            theta = angle(CF_max);
+            
+            % Оценка нормированного частотного сдвига по формуле из методички
+            f_n_est = -4*theta / (2 * pi);
+            
+            % Переводим оценку обратно в Герцы
+            delta_f_est = f_n_est * (Fs / Nfft);
+            
+            % Домножаем ВЕСЬ принятый сигнал во времени на компенсирующую экспоненту
+            t_rx = (0 : length(OFDM_noise) - 1).' / Fs;
+            OFDM_noise = OFDM_noise .* exp(-1j * 2 * pi * delta_f_est * t_rx);
 
         else
             if punkt == 1
@@ -146,14 +169,31 @@ for idx_ber = 1:length(SNR_vector)
 
                 % Когерентное накопление
                 if N_symbs == 2
-                    ACF = abs(R);
+                    ACF = R;
                 else
-                    ACF = abs(sum(R, 1));
+                    ACF = sum(R, 1);
                 end
                 % Приведение к строке
                 ACF = reshape(ACF, 1, []);
 
-                [~, true_delay] = max(ACF);
+                [~, true_delay] = max(abs(ACF));
+                % --- БЛОК ЧАСТОТНОЙ СИНХРОНИЗАЦИИ ---
+                % Извлекаем комплексное значение пика
+                CF_max = ACF(true_delay);
+                
+                % Находим фазу пика (угол поворота)
+                theta = angle(CF_max);
+                
+                % Оценка нормированного частотного сдвига по формуле из методички
+                f_n_est = -theta / (2 * pi);
+                
+                % Переводим оценку обратно в Герцы
+                delta_f_est = f_n_est * (Fs / Nfft);
+                
+                % Домножаем ВЕСЬ принятый сигнал во времени на компенсирующую экспоненту
+                t_rx = (0 : length(OFDM_noise) - 1).' / Fs;
+                OFDM_noise = OFDM_noise .* exp(-1j * 2 * pi * delta_f_est * t_rx);
+        
             end
         end       
         % компенсация задержки
@@ -199,17 +239,17 @@ for idx_ber = 1:length(SNR_vector)
 end
 
 %% АКФ 
-if alg == 2
-    figure;
-    plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
-    xlabel("time_shift");
-    ylabel("ACF");
-else
-    figure;
-    plot(linspace(1,length(M),length(M)),abs(M));
-    xlabel("time_shift");
-    ylabel("Metric_meen");
-end
+% if alg == 2
+%     figure;
+%     plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
+%     xlabel("time_shift");
+%     ylabel("ACF");
+% else
+%     figure;
+%     plot(linspace(1,length(M),length(M)),abs(M));
+%     xlabel("time_shift");
+%     ylabel("Metric_meen");
+% end
 %% Теоретическая кривая
 P_const = mean(abs(qammod(0:M_inf-1, M_inf)).^2);   
 EbN0_vector = SNR_vector - 10*log10(P_const);
