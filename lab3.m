@@ -26,21 +26,25 @@ k_pilot = log2(M_pilot);
 n_pilot_bits = length(pilot_sc);
 
 
-%% Константы кадра
-CP_len = Nfft/128;
+%% параметры кадра
+CP_len = Nfft/4;
 T_symb = 100e-6;
 Fs = Nfft/T_symb;
-N_symbs = 2;
+N_symbs = 10;
 
 time_shift = 600;
 t_delay = zeros(time_shift,1);
-
-alg = 1; %1 - мин 2 - ЦП
-punkt = 0; % выбор пункта лабы
-delta = 0;
+f_n = 0;
+alg = 2; %1 - мин 2 - ЦП
+punkt = 1; % 1 - без синхронизации
+delta = -20;
+%% пилоты
+rng(1);
+pilot_bits = randi([0,1],n_pilot_bits*k_pilot,N_symbs);
+qampilot = qammod(pilot_bits,M_pilot,'InputType', 'bit','UnitAveragePower', true);
 
 %% канал 
-SNR_vector = 1:20; 
+SNR_vector = 1:30; 
 BER_vector = zeros(1, length(SNR_vector));
 
 N_frames = 100;   
@@ -52,9 +56,6 @@ for idx_ber = 1:length(SNR_vector)
     total_bits = 0;
 
     for frame = 1:N_frames
-        %% формирование пилотов
-        pilot_bits = randi([0,1],n_pilot_bits*k_pilot,N_symbs);
-        qampilot = qammod(pilot_bits,M_pilot,'InputType', 'bit','UnitAveragePower', true);
 
         bits = randi([0,1],n_inf_bits*k_inf,N_symbs);
         qamsymb = qammod(bits,M_inf,'InputType', 'bit','UnitAveragePower', true);
@@ -91,7 +92,7 @@ for idx_ber = 1:length(SNR_vector)
         end
 
         % частотная расстройка
-        f_n = 2;
+        
         delta_f = f_n * (Fs / Nfft);
         t = (0 : length(OFDM_vector_shift) - 1).' / Fs;
         OFDM_vector_shift = OFDM_vector_shift .* exp(1j * 2 * pi * delta_f * t);
@@ -227,7 +228,7 @@ for idx_ber = 1:length(SNR_vector)
         end
         rx_data_equalized = OFDM_rx_fd./H_all;
         rx_data_equalized = rx_data_equalized(:,Y_inf);
-        rx_data_demap = qamdemod(rx_symbs, 16,'OutputType', 'bit','UnitAveragePower', true);% если без экв то = rx_symbs, с экв rx_data_equalized
+        rx_data_demap = qamdemod(rx_data_equalized, 16,'OutputType', 'bit','UnitAveragePower', true);% если без экв то = rx_symbs, с экв rx_data_equalized
         
         % Считаем ошибки текущего фрейма
         [numErrors, ~] = biterr(bits_dem_cut(:), rx_data_demap(:));
