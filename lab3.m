@@ -32,11 +32,10 @@ T_symb = 100e-6;
 Fs = Nfft/T_symb;
 N_symbs = 10;
 
-time_shift = 600;
-t_delay = zeros(time_shift,1);
+time_shift = 2000;
 f_n = 0;
-alg = 2; %1 - мин 2 - ЦП
-punkt = 1; % 1 - без синхронизации
+alg = 1; %1 - мин 2 - ЦП
+punkt = 0; % 1 - без синхронизации
 delta = -20;
 %% пилоты
 rng(1);
@@ -86,9 +85,9 @@ for idx_ber = 1:length(SNR_vector)
 
         % Добавляем временной сдвиг
         if alg == 1
-            OFDM_vector_shift = [t_delay;sync_meen(:); OFDM_vector];
+            OFDM_vector_shift = [circshift(OFDM_vector(1:time_shift,:),1534);sync_meen(:); OFDM_vector];
         else
-            OFDM_vector_shift = [t_delay;OFDM_vector];
+            OFDM_vector_shift = [circshift(OFDM_vector(1:time_shift,:),1534);OFDM_vector];
         end
 
         % частотная расстройка
@@ -130,7 +129,7 @@ for idx_ber = 1:length(SNR_vector)
             E3 = E(shifts+3*L) - E(shifts+2*L);
             E4 = E(shifts+4*L) - E(shifts+3*L);
 
-            M = abs(P).^2 ./ ((E1+E3).*(E2+E4) + eps);
+            M = abs(P).^2 ./ ((E1+E2+E3+E4)./2).^2;
 
             [~, sync_position] = max(M);
             % --- БЛОК ЧАСТОТНОЙ СИНХРОНИЗАЦИИ ---
@@ -240,17 +239,17 @@ for idx_ber = 1:length(SNR_vector)
 end
 
 %% АКФ 
-% if alg == 2
-%     figure;
-%     plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
-%     xlabel("time_shift");
-%     ylabel("ACF");
-% else
-%     figure;
-%     plot(linspace(1,length(M),length(M)),abs(M));
-%     xlabel("time_shift");
-%     ylabel("Metric_meen");
-% end
+if alg == 2
+    figure;
+    plot(linspace(1,length(ACF),length(ACF)),abs(ACF));
+    xlabel("time_shift");
+    ylabel("ACF");
+else
+    figure;
+    plot(linspace(1,length(M),length(M)),abs(M));
+    xlabel("time_shift");
+    ylabel("Metric_meen");
+end
 %% Теоретическая кривая
 P_const = mean(abs(qammod(0:M_inf-1, M_inf)).^2);   
 EbN0_vector = SNR_vector - 10*log10(P_const);
